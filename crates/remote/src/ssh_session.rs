@@ -1785,19 +1785,25 @@ impl SshRemoteConnection {
         println!("==> remote server path: {:?}", dst_path);
         let tmp_path_gz = PathBuf::from(format!(
             "{}-download-{}.gz",
-            dst_path.to_string_lossy(),
+            dst_path.to_string_lossy().replace('\\', "/"),
             std::process::id()
         ));
 
         #[cfg(debug_assertions)]
         if std::env::var("ZED_BUILD_REMOTE_SERVER").is_ok() {
-            let src_path = self
-                .build_local(self.platform().await?, delegate, cx)
-                .await?;
-            self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
-                .await?;
-            self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-                .await?;
+            let ret = self.build_local(self.platform().await?, delegate, cx).await;
+            println!("==> build_local: {:?}", ret);
+            let src_path = ret?;
+            let ret = self
+                .upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
+                .await;
+            println!("==> upload_local_server_binary: {:?}", ret);
+            ret?;
+            let ret = self
+                .extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+                .await;
+            println!("==> extract_server_binary: {:?}", ret);
+            ret?;
             return Ok(dst_path);
         }
 
@@ -2031,6 +2037,8 @@ impl SshRemoteConnection {
                 .output()
                 .await?;
             if !output.status.success() {
+                let err = String::from_utf8_lossy(&output.stderr);
+                println!("==> run_cmd: {}", err);
                 Err(anyhow!("Failed to run command: {:?}", command))?;
             }
             Ok(())
@@ -2085,7 +2093,16 @@ impl SshRemoteConnection {
             cx,
         );
         log::info!("building remote server binary from source for {}", &triple);
-        run_cmd(
+        println!(
+            "==> building remote server binary from source for {}",
+            &triple
+        );
+        let target_dir = std::env::current_dir()?
+            .join("target")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let mount_var = format!("--mount type=bind,src={},dst=/app/target", target_dir);
+        let ret = run_cmd(
             Command::new("cross")
                 .args([
                     "build",
@@ -2098,21 +2115,33 @@ impl SshRemoteConnection {
                     "--target",
                     &triple,
                 ])
-                .env(
-                    "CROSS_CONTAINER_OPTS",
-                    "--mount type=bind,src=./target,dst=/app/target",
-                ),
+                .env("CROSS_CONTAINER_OPTS", mount_var),
         )
-        .await?;
+        .await;
+        println!("==> build err: {:?}", ret);
+        ret?;
 
         delegate.set_status(Some("Compressing binary"), cx);
 
-        run_cmd(Command::new("gzip").args([
-            "-9",
-            "-f",
-            &format!("target/remote_server/{}/debug/remote_server", triple),
-        ]))
-        .await?;
+        #[cfg(not(target_os = "windows"))]
+        {
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                &format!("target/remote_server/{}/debug/remote_server", triple),
+            ]))
+            .await?;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            run_cmd(Command::new("7z.exe").args([
+                "a",
+                "-tgzip",
+                &format!("target/remote_server/{}/debug/remote_server.gz", triple),
+                &format!("target/remote_server/{}/debug/remote_server", triple),
+            ]))
+            .await?;
+        }
 
         let path = std::env::current_dir()?.join(format!(
             "target/remote_server/{}/debug/remote_server.gz",
