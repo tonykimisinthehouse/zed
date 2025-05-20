@@ -163,7 +163,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     }
 }
 
-fn main() {
+pub fn main() {
     // Check if there is a pending installer
     // If there is, run the installer and exit
     // And we don't want to run the installer if we are not the first instance
@@ -199,9 +199,6 @@ fn main() {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);
         }
     }
-
-    menu::init();
-    zed_actions::init();
 
     let file_errors = init_paths();
     if !file_errors.is_empty() {
@@ -343,6 +340,9 @@ fn main() {
     });
 
     app.run(move |cx| {
+        menu::init();
+        zed_actions::init();
+
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
         if let Some(app_commit_sha) = app_commit_sha {
@@ -1003,7 +1003,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
     })
 }
 
-fn stdout_is_a_pty() -> bool {
+pub fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
 }
 
